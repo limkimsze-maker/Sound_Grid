@@ -65,31 +65,27 @@
   /* Footer (existing) */
   footer{position:absolute;bottom:6px;right:10px;display:flex;gap:8px;align-items:center;justify-content:flex-end;font-size:18px;opacity:.85;padding:0}
 
-  /* NEW: tiny credit, bottom-left, non-blocking */
   /* tiny stacked credits, bottom-right, above footer; links clickable */
-.credit{
-  position:absolute;
-  right:10px;
-  bottom: calc(6px + 28px); /* footer bottom (6px) + ~line height */
-  font-size:10px;
-  line-height:1.15;
-  color:var(--muted);
-  opacity:.85;
-  text-align:right;
-  max-width:min(48ch, 40vw);
-  pointer-events:none; /* don't block taps */
-  z-index:1;
-}
-.credit a{ color:inherit; text-decoration:underline; pointer-events:auto }
-
+  .credit{
+    position:absolute;
+    right:10px;
+    bottom: calc(6px + 28px);
+    font-size:10px;
+    line-height:1.15;
+    color:var(--muted);
+    opacity:.85;
+    text-align:right;
+    max-width:min(48ch, 40vw);
+    pointer-events:none;
+    z-index:1;
+  }
+  .credit a{ color:inherit; text-decoration:underline; pointer-events:auto }
 
   @page{size:A4 landscape;margin:8mm}
   @media print{
     html,body{overflow:visible;background:#fff}
     #page{transform:none !important;width:auto;height:auto;box-shadow:none;border:0}
     .zoom,.sub,footer{display:none}
-    /* keep credit on print; remove this next line if you want it hidden in print */
-    /* .credit{display:none} */
   }
 </style>
 </head>
@@ -99,26 +95,24 @@
     <header>
       <div>
         <h1>🎵 Tap a Box to Hear the Sound!</h1>
-        <div class="sub">Files: <code>audio/c_*.mp3</code> & <code>audio/v_*.mp3</code> • Missing files use speech</div>
+        <div class="sub">Files: <code>audio/c_*.mp3</code> / <code>.mp4</code> & <code>audio/v_*.mp3</code> / <code>.mp4</code> • Missing files use speech</div>
       </div>
       <div class="controls"><button id="magnifyBtn" class="btn" disabled>Magnify</button></div>
     </header>
 
     <div class="wrap" id="wrap"></div>
 
-
     <!-- Stacked credits (bottom-right) -->
-<div class="credit" role="contentinfo" aria-label="credits">
-  <div>© 2025 Lim Kim Sze
-    <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC-ND 4.0</a>
-  </div>
-  <div>Audio © <span id="yearAudio"></span> sithu, lookang, eve, huaylee —
-    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC-SA 4.0</a>.
-    Compiled with <a href="https://www.um.es/fem/EjsWiki/Main/WebEJS" target="_blank" rel="noopener noreferrer">WebEJS</a>.
-  </div>
-  <div>Audio © Ministry of Education (Singapore), used with permission.</div>
-</div>
-
+    <div class="credit" role="contentinfo" aria-label="credits">
+      <div>© 2025 Lim Kim Sze
+        <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC-ND 4.0</a>
+      </div>
+      <div>Audio © <span id="yearAudio"></span> sithu, lookang, eve, huaylee —
+        <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC-SA 4.0</a>.
+        Compiled with <a href="https://www.um.es/fem/EjsWiki/Main/WebEJS" target="_blank" rel="noopener noreferrer">WebEJS</a>.
+      </div>
+      <div>Audio © Ministry of Education (Singapore), used with permission.</div>
+    </div>
 
     <footer>Have fun learning!</footer>
   </div>
@@ -138,7 +132,7 @@ const STICKERS={
   'Vowel Teams':'👯','Diphthongs':'🌊','R-controlled Vowels':'🧭','Morphemes — Prefixes':'🔰','Morphemes — Suffixes':'🔚'
 };
 
-/* Data — ids map to audio/<id>.mp3  */
+/* Data — ids map to audio/<id>.mp3 OR audio/<id>.mp4 */
 const DATA=[
   {title:"Voiced Consonants",color:COLORS.consVoiced,items:[
     {id:"c_b",label:"b",example:"bin"},{id:"c_d",label:"d",example:"dot"},
@@ -269,7 +263,8 @@ const DATA=[
     {id:"ous",label:"-ous",example:"nervous"},{id:"ly",label:"-ly",example:"quickly"},
     {id:"-sion",label:"-sion",example:"impression"},{id:"tion",label:"-tion",example:"condition"},
     {id:"able",label:"-able",example:"adaptable"},{id:"ment",label:"-ment",example:"movement"},
-    {id:"ness",label:"-ness",example:"illness"},{id:"ing",label:"-ing",example:"singing"},{id:"less",label:"-less",example:"restless"},{id:"delicious",label:"-cious",example:"gracious"}
+    {id:"ness",label:"-ness",example:"illness"},{id:"ing",label:"-ing",example:"singing"},
+    {id:"less",label:"-less",example:"restless"},{id:"delicious",label:"-cious",example:"gracious"}
   ]}
 ];
 
@@ -278,61 +273,161 @@ const AUDIO_IDS = DATA.flatMap(sec => sec.items.map(it => it.id));
 
 /* -------- FAST audio engine (Web Audio with <audio> fallback) -------- */
 class AudioEngine{
-  constructor(){ this.ctx=null; this.buffers=new Map(); this.html=new Map(); this.prefetched=false; }
+  constructor(){
+    this.ctx=null;
+    this.buffers=new Map();      // url -> AudioBuffer
+    this.html=new Map();         // id  -> HTMLAudioElement
+    this.urlCache=new Map();     // id  -> resolved url (mp3 or mp4)
+    this.prefetched=false;
+    this.exts=['mp3','mp4'];     // ✅ now supports .mp4 too
+  }
+
   async unlock(){
     if(this.ctx) { if(this.ctx.state==='suspended') await this.ctx.resume(); return; }
     const AC=window.AudioContext||window.webkitAudioContext;
     if(AC){ this.ctx=new AC(); }
   }
-  async loadBuffer(id){
-    if(this.buffers.has(id)) return this.buffers.get(id);
+
+  _candidateUrls(id){
+    return this.exts.map(ext => `audio/${id}.${ext}`);
+  }
+
+  async _tryFetchArrayBuffer(url){
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('fetch');
+    return await res.arrayBuffer();
+  }
+
+  async _decodeUrlToBuffer(url){
+    if(this.buffers.has(url)) return this.buffers.get(url);
     if(!this.ctx) throw new Error('noctx');
-    const url=`audio/${id}.mp3`;
-    const res=await fetch(url); if(!res.ok) throw new Error('fetch');
-    const arr=await res.arrayBuffer();
-    const buf=await this.ctx.decodeAudioData(arr);
-    this.buffers.set(id,buf);
+    const arr = await this._tryFetchArrayBuffer(url);
+    const buf = await this.ctx.decodeAudioData(arr);
+    this.buffers.set(url, buf);
     return buf;
   }
+
+  async _resolveUrlByDecode(id){
+    // Try to resolve using WebAudio decode (fast playback). Falls back if missing/unsupported.
+    for(const url of this._candidateUrls(id)){
+      try{
+        const buf = await this._decodeUrlToBuffer(url);
+        this.urlCache.set(id, url);
+        return { url, buf };
+      }catch(e){
+        // try next ext
+      }
+    }
+    throw new Error('noaudio');
+  }
+
+  async _playWithWebAudio(id, onended){
+    await this.unlock();
+    if(!this.ctx) throw new Error('noctx');
+
+    // If we've already resolved a URL, try it first
+    const cached = this.urlCache.get(id);
+    if(cached){
+      try{
+        const buf = await this._decodeUrlToBuffer(cached);
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        const gain = this.ctx.createGain(); gain.gain.value = 1.0;
+        src.connect(gain).connect(this.ctx.destination);
+        if(onended) src.onended = onended;
+        src.start(0);
+        if(!this.prefetched){ this.prefetched=true; this.preloadAll(); }
+        return true;
+      }catch(e){
+        // fall through to resolve attempts
+      }
+    }
+
+    // Try mp3 then mp4 (or whatever exts list is), decoding each
+    const { url, buf } = await this._resolveUrlByDecode(id);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const gain = this.ctx.createGain(); gain.gain.value = 1.0;
+    src.connect(gain).connect(this.ctx.destination);
+    if(onended) src.onended = onended;
+    src.start(0);
+    if(!this.prefetched){ this.prefetched=true; this.preloadAll(); }
+    return true;
+  }
+
+  async _playWithHtmlAudio(id, onended){
+    let a = this.html.get(id);
+    if(!a){
+      a = new Audio();
+      a.preload = 'auto';
+      a.playsInline = true;
+      this.html.set(id, a);
+    }
+    a.onended = onended || null;
+
+    const tryPlay = async (url) => {
+      try{
+        a.src = url;
+        a.currentTime = 0;
+        await a.play();
+        this.urlCache.set(id, url);
+        return true;
+      }catch(e){
+        return false;
+      }
+    };
+
+    const cached = this.urlCache.get(id);
+    if(cached && await tryPlay(cached)) return true;
+
+    // ✅ Try mp3, then mp4
+    if(await tryPlay(`audio/${id}.mp3`)) return true;
+    if(await tryPlay(`audio/${id}.mp4`)) return true;
+
+    return false;
+  }
+
   async play(id,onended){
     // Returns true if audio started, false if we should fall back to speech
     try{
-      await this.unlock();
-      if(this.ctx){
-        try{
-          const buf=await this.loadBuffer(id);
-          const src=this.ctx.createBufferSource();
-          src.buffer=buf;
-          const gain=this.ctx.createGain(); gain.gain.value=1.0;
-          src.connect(gain).connect(this.ctx.destination);
-          if(onended) src.onended=onended;
-          src.start(0);
-          if(!this.prefetched){ this.prefetched=true; this.preloadAll(); }
-          return true;
-        }catch(e){ /* fall through to HTMLAudio */ }
+      // Prefer WebAudio (lowest latency)
+      try{
+        const ok = await this._playWithWebAudio(id, onended);
+        return !!ok;
+      }catch(e){
+        // WebAudio missing/failed (file missing or mp4 decode unsupported) -> HTMLAudio
       }
-    }catch(e){ /* ignore */ }
-    try{
-      let a=this.html.get(id);
-      if(!a){
-        a=new Audio(`audio/${id}.mp3`);
-        a.preload='auto'; a.playsInline=true;
-        this.html.set(id,a);
-      }
-      if(onended){ a.onended=onended; } else { a.onended=null; }
-      const ok = await a.play().then(()=>true).catch(()=>false);
-      return ok;
+      return await this._playWithHtmlAudio(id, onended);
     }catch(e){
       return false;
     }
   }
+
   preloadAll(concurrency=4){
     if(!this.ctx) return;
     const ids=AUDIO_IDS.slice(); let i=0;
     const run=async()=>{
       while(i<ids.length){
-        const id=ids[i++]; if(this.buffers.has(id)) continue;
-        try{ await this.loadBuffer(id); }catch(e){/* ignore missing */ }
+        const id=ids[i++];
+
+        // If we already have a resolved URL, try to decode/cache it
+        const cached = this.urlCache.get(id);
+        if(cached){
+          if(this.buffers.has(cached)) continue;
+          try{ await this._decodeUrlToBuffer(cached); }catch(e){}
+          continue;
+        }
+
+        // Otherwise attempt decode in ext order; if mp4 decode fails, it's fine (HTMLAudio will still work on demand)
+        for(const url of this._candidateUrls(id)){
+          try{
+            await this._decodeUrlToBuffer(url);
+            this.urlCache.set(id, url);
+            break;
+          }catch(e){
+            // keep trying next ext
+          }
+        }
       }
     };
     for(let k=0;k<concurrency;k++) run();
@@ -439,8 +534,41 @@ function openMagnify(startIndex){
   <script>
     const SEQ = ${JSON.stringify(seq)};
     let idx = ${startIndex}; let playedOnce = false;
-    function speak(t){ try{ const u = new SpeechSynthesisUtterance(t); speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
-    function play(id){ try{ const a = new Audio('audio/'+id+'.mp3'); a.preload='auto'; a.playsInline=true; a.currentTime=0; a.play().catch(()=>speak(document.getElementById('label').textContent)); } catch(e){ speak(document.getElementById('label').textContent); } }
+
+    function speak(t){
+      try{ const u = new SpeechSynthesisUtterance(t); speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){}
+    }
+
+    // ✅ Try .mp3 first, then .mp4
+    async function play(id){
+      const fallbackText = document.getElementById('label').textContent;
+      try{
+        const a = new Audio();
+        a.preload = 'auto';
+        a.playsInline = true;
+
+        // try mp3
+        a.src = 'audio/' + id + '.mp3';
+        try{
+          a.currentTime = 0;
+          await a.play();
+          return;
+        }catch(e){
+          // try mp4
+          a.src = 'audio/' + id + '.mp4';
+          try{
+            a.currentTime = 0;
+            await a.play();
+            return;
+          }catch(e2){
+            speak(fallbackText);
+          }
+        }
+      }catch(e){
+        speak(fallbackText);
+      }
+    }
+
     function render(){
       playedOnce = false;
       const it = SEQ[idx];
@@ -453,16 +581,27 @@ function openMagnify(startIndex){
     }
     function nextOrPlay(){ if(!playedOnce){ playedOnce = true; document.getElementById('bigbtn').click(); } else { idx = (idx+1)%SEQ.length; render(); }}
     function prevOrPlay(){ if(!playedOnce){ playedOnce = true; document.getElementById('bigbtn').click(); } else { idx = (idx-1+SEQ.length)%SEQ.length; render(); } }
-    document.getElementById('next').onclick = nextOrPlay; document.getElementById('home').onclick = ()=>window.close();
+    document.getElementById('next').onclick = nextOrPlay;
+    document.getElementById('home').onclick = ()=>window.close();
     document.getElementById('back').onclick = prevOrPlay;
-    window.addEventListener('keydown', e=>{ if(e.key==='ArrowRight') nextOrPlay(); if(e.key==='ArrowLeft') prevOrPlay(); if(e.key==='Escape') window.close(); if(e.key===' '|| e.key==='Enter'){ e.preventDefault(); document.getElementById('bigbtn').click(); } });
+
+    window.addEventListener('keydown', e=>{
+      if(e.key==='ArrowRight') nextOrPlay();
+      if(e.key==='ArrowLeft') prevOrPlay();
+      if(e.key==='Escape') window.close();
+      if(e.key===' '|| e.key==='Enter'){ e.preventDefault(); document.getElementById('bigbtn').click(); }
+    });
+
     render();
   <\/script></div></body></html>`;
   w.document.open(); w.document.write(html); w.document.close();
 }
-if(magnifyBtn){ magnifyBtn.addEventListener('click', ()=>{ if(LAST_INDEX>=0) openMagnify(LAST_INDEX); else alert('Tap a sound first.'); }); }
+if(magnifyBtn){
+  magnifyBtn.addEventListener('click', ()=>{
+    if(LAST_INDEX>=0) openMagnify(LAST_INDEX);
+    else alert('Tap a sound first.');
+  });
+}
 </script>
 </body>
 </html>
-
-
